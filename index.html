@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#556040">
 <title>NutriSan – Consultorio de Nutrición</title>
-<script>if(location.hash.indexOf("#p=")===0)document.documentElement.style.visibility="hidden";</script>
+<script>if(/^#[ps]=/.test(location.hash))document.documentElement.style.visibility="hidden";</script>
 <style>
 :root{
   --bg:#f5f6f4; --panel:#ffffff; --ink:#1f2a24; --muted:#66736b; --line:#dde3de;
@@ -588,7 +588,7 @@ function vPortal(p, el){
       <label><input type="checkbox" data-k="incluirHistorial" ${po.incluirHistorial!==false?"checked":""}> Historial de mediciones</label></div></div>
     <div class="card"><h3>Enviar al paciente</h3>
       ${baseWeb()?`<div class="row" style="margin-bottom:10px"><button class="btn" id="btnLinkWa">Enviar link por WhatsApp</button><button class="btn sec" id="btnLinkCopiar">Copiar link</button></div>
-      <p class="note" style="margin-top:0">Con el link, el paciente puede instalar NutriSan en su celular y le aparece el logo en la pantalla de inicio. También podés mandarle el archivo:</p>`
+      <p class="note" style="margin-top:0">El link está protegido: el paciente entra con su <b>DNI</b> (cargalo en la Ficha). Con el link, el paciente puede instalar NutriSan en su celular y le aparece el logo en la pantalla de inicio. También podés mandarle el archivo:</p>`
       :`<p class="note" style="margin-top:0">Cuando NutriSan esté publicado en internet, acá vas a poder mandar un link para que el paciente lo instale como app. Por ahora, mandale el archivo:</p>`}
       <div class="row">
       ${puedeCompartir?'<button class="btn" id="btnCompartir">Compartir (WhatsApp, mail…)</button>':""}
@@ -629,12 +629,12 @@ function vPortal(p, el){
   };
   const bw=el.querySelector("#btnLinkWa");
   if(bw) bw.onclick=async()=>{
-    const url=await linkPaciente(p), tel=soloNum(p.telefono);
-    const txt="¡Hola "+((p.nombre||"").split(" ")[0]||"")+"! Te comparto tu portal de NutriSan con tu progreso, metas y sugerencias. Abrilo y agregalo a tu pantalla de inicio:\n"+url;
+    const url=await linkPaciente(p), tel=soloNum(p.telefono); if(!url) return;
+    const txt="¡Hola "+((p.nombre||"").split(" ")[0]||"")+"! Te comparto tu portal de NutriSan con tu progreso, metas y sugerencias. Para entrar, usá tu DNI (solo números). Abrilo y agregalo a tu pantalla de inicio:\n"+url;
     window.open("https://wa.me/"+(tel.length>=10?tel:"")+"?text="+encodeURIComponent(txt),"_blank");
   };
   const bcp=el.querySelector("#btnLinkCopiar");
-  if(bcp) bcp.onclick=async()=>{ const url=await linkPaciente(p); try{ await navigator.clipboard.writeText(url); bcp.textContent="¡Link copiado!"; }catch(e){ prompt("Copiá este link:", url); } setTimeout(()=>bcp.textContent="Copiar link",2000); };
+  if(bcp) bcp.onclick=async()=>{ const url=await linkPaciente(p); if(!url) return; try{ await navigator.clipboard.writeText(url); bcp.textContent="¡Link copiado!"; }catch(e){ prompt("Copiá este link:", url); } setTimeout(()=>bcp.textContent="Copiar link",2000); };
   pintarMetas();
   prev.srcdoc = htmlPaciente(p);
 }
@@ -853,7 +853,56 @@ function datosParaPaciente(p){
        plan:p.plan?{comidas:p.plan.comidas, recomendaciones:p.plan.recomendaciones}:null, portal:portalDe(p)}};
 }
 const baseWeb = () => { const w=((db.profesional||{}).web||"").trim(); if(w) return w.split("#")[0]; return /^https?:/.test(location.protocol)? location.origin+location.pathname : ""; };
-async function linkPaciente(p){ const b=baseWeb(); return b ? b+"#p="+await empaquetar(datosParaPaciente(p)) : ""; }
+/* ---- Link del paciente protegido con su DNI (cifrado AES-GCM; el DNI nunca viaja en el link) ---- */
+async function claveDni(dni, salt){
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode("nutrisan-dni:"+soloNum(dni)), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:200000, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+}
+async function cifrarParaPaciente(obj, dni){
+  const raw = new TextEncoder().encode(JSON.stringify(obj));
+  let datos = raw, z = "0";
+  if(window.CompressionStream){ const st=new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate-raw")); datos=new Uint8Array(await new Response(st).arrayBuffer()); z="1"; }
+  const salt=crypto.getRandomValues(new Uint8Array(16)), iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, await claveDni(dni, salt), datos));
+  const todo=new Uint8Array(28+ct.length); todo.set(salt,0); todo.set(iv,16); todo.set(ct,28);
+  return "e"+z+b64u(todo);
+}
+async function descifrarConDni(t, dni){
+  const b=unb64u(t.slice(2)), salt=b.slice(0,16), iv=b.slice(16,28), ct=b.slice(28);
+  let datos=new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM", iv}, await claveDni(dni, salt), ct)); // falla si el DNI no coincide
+  if(t[1]==="1"){ const st=new Blob([datos]).stream().pipeThrough(new DecompressionStream("deflate-raw")); datos=new Uint8Array(await new Response(st).arrayBuffer()); }
+  return JSON.parse(new TextDecoder().decode(datos));
+}
+function abrirPortal(d){
+  db={version:1, profesional:d.pf||{}, pacientes:[d.p]}; FECHA_ACT=d.f||null;
+  const html=htmlPaciente(d.p,{web:true});
+  document.open(); document.write(html); document.close();
+}
+function pantallaDni(t){
+  document.documentElement.style.visibility="";
+  if(/^https:/.test(location.protocol)) document.head.insertAdjacentHTML("beforeend", headWeb());
+  const div=document.createElement("div"); div.id="acceso";
+  div.innerHTML=`<div class="accCaja"><img src="${LOGO()}" alt="NutriSan"><div class="accMarca">NutriSan</div><div class="accTag">EQUILIBRIO · SALUD · BIENESTAR</div>
+    <p><b>Mi portal de paciente</b></p><p>Ingresá tu <b>DNI</b> (solo números) para ver tu progreso.</p>
+    <input id="accDni" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="DNI">
+    <div class="accErr" id="accErr"></div><button class="accBtn" id="accEntrar">Entrar</button>
+    <p class="accNota">Tus datos están protegidos: sin tu DNI no se pueden ver.</p></div>`;
+  document.body.appendChild(div);
+  const inp=div.querySelector("#accDni"), err=div.querySelector("#accErr"), btn=div.querySelector("#accEntrar");
+  const entrar=async()=>{
+    const dni=soloNum(inp.value); err.textContent="";
+    if(dni.length<6){ err.textContent="Escribí tu DNI completo, solo números."; return; }
+    btn.disabled=true; btn.textContent="Abriendo…";
+    try{ const d=await descifrarConDni(t, dni); try{ localStorage.setItem("nutrisan_portal", t); }catch(e){} abrirPortal(d); }
+    catch(e){ err.textContent="El DNI no coincide. Revisalo e intentá de nuevo."; inp.value=""; btn.disabled=false; btn.textContent="Entrar"; }
+  };
+  btn.onclick=entrar; inp.onkeydown=e=>{ if(e.key==="Enter") entrar(); }; inp.focus();
+}
+async function linkPaciente(p){
+  const b=baseWeb(); if(!b) return "";
+  if(soloNum(p.dni).length<6){ alert("Para enviar el link, primero cargá el DNI del paciente en la Ficha: es su clave para entrar."); return ""; }
+  return b+"#s="+await cifrarParaPaciente(datosParaPaciente(p), p.dni);
+}
 
 function headWeb(){
   return `<link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -911,7 +960,7 @@ function pantallaAcceso(alEntrar){
     </div>
     <div id="accPacInfo" hidden>
       <p><b>¿Sos paciente de NutriSan?</b></p>
-      <p>Tu nutricionista te envía por WhatsApp un <b>link personal</b>. Abrilo desde ese mensaje para ver tu progreso, tus metas y tu plan.</p>
+      <p>Tu nutricionista te envía por WhatsApp un <b>link personal</b>. Abrilo desde ese mensaje y entrá con tu <b>DNI</b> para ver tu progreso, tus metas y tu plan.</p>
       <p class="accNota">Después de abrirlo, podés agregarlo a la pantalla de inicio del celular para tenerlo siempre a mano.</p>
       <button class="accLink" id="accVolver2">← Volver</button>
     </div>
@@ -940,9 +989,12 @@ function cambiarPin(){
 }
 
 async function arrancar(){
+  const hs = location.hash.indexOf("#s=")===0 ? location.hash.slice(3) : "";
+  if(hs){ pantallaDni(hs); return; }
   let t = location.hash.indexOf("#p=")===0 ? location.hash.slice(3) : "";
   const standalone = window.matchMedia && (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone);
   if(!t && standalone){ try{ t=localStorage.getItem("nutrisan_portal")||""; }catch(e){} }
+  if(t && t[0]==="e"){ pantallaDni(t); return; }
   if(t){
     try{
       const d=await desempaquetar(t);
