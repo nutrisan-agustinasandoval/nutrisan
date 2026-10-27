@@ -121,6 +121,16 @@ aside .tools{background:var(--cream-soft)}
   dialog{padding:16px}
 }
 @media (max-width:420px){ .res{grid-template-columns:1fr} #estadoGuardado{display:none} }
+#acceso{position:fixed;inset:0;z-index:100;background:var(--accent);display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto}
+.accCaja{background:#fff;border-radius:22px;padding:28px 22px;width:100%;max-width:360px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+.accCaja img{width:96px;height:96px;border-radius:50%}
+.accMarca{font-size:24px;font-weight:700;color:var(--accent);margin-top:6px}.accTag{font-size:10px;letter-spacing:.18em;color:#8a7a5a;margin-bottom:20px}
+.accBtn{display:block;width:100%;padding:14px;margin:10px 0;border-radius:12px;border:2px solid var(--accent);background:var(--accent);color:#fff;font-size:16px;font-weight:700;cursor:pointer}
+.accBtn.sec{background:var(--cream-soft);color:var(--accent);border-color:var(--cream)}
+.accCaja input{width:100%;font-size:22px;text-align:center;letter-spacing:.3em;padding:10px;margin:6px 0;border-radius:10px}
+.accCaja p{font-size:14.5px;color:var(--ink);line-height:1.45}.accNota{color:var(--muted)!important;font-size:13px!important}
+.accErr{color:var(--bad);font-size:13px;min-height:18px}.accLink{background:none;border:none;color:var(--muted);cursor:pointer;margin-top:4px;font-size:14px}
+[hidden]{display:none!important}
 @media print{
   body{background:#fff}
   header.top,.layout{display:none!important}
@@ -148,6 +158,8 @@ aside .tools{background:var(--cream-soft)}
   <button id="btnExport">Guardar copia</button>
   <button id="btnImport">Abrir copia</button>
   <button id="btnConfig">Mis datos</button>
+  <button id="btnPin">Cambiar PIN</button>
+  <button id="btnSalir">Salir 🔒</button>
   </div>
   <input type="file" id="fileImport" accept=".json" hidden>
 </header>
@@ -785,6 +797,8 @@ document.getElementById("btnNuevo").onclick=()=>{
   setTimeout(()=>{ const i=document.querySelector('[data-f="nombre"]'); if(i){i.focus(); i.select();} },50);
 };
 document.getElementById("buscar").oninput=renderLista;
+document.getElementById("btnSalir").onclick=()=>cerrarSesion();
+document.getElementById("btnPin").onclick=()=>cambiarPin();
 document.getElementById("btnMenu").onclick=()=>document.querySelector("header.top").classList.toggle("abierto");
 document.querySelectorAll("header.top .acciones button").forEach(b=>b.addEventListener("click",()=>document.querySelector("header.top").classList.remove("abierto")));
 document.getElementById("btnExport").onclick=()=>{
@@ -866,6 +880,65 @@ const CSS_INSTALAR = `.instalar{position:sticky;bottom:0;display:flex;gap:10px;a
 .instalar button{background:var(--olive);color:#fff;border:0;border-radius:10px;padding:10px 14px;font:inherit;font-weight:700}
 .instalar .x{background:none;color:var(--muted);padding:6px;font-weight:400}.sh{display:inline-block;border:1px solid var(--muted);border-radius:4px;padding:0 3px;font-size:12px}`;
 
+/* ---- Acceso: profesional (con PIN) o paciente ---- */
+const PIN_KEY = "nutrisan_pin";
+async function hashPin(pin){
+  const txt = "nutrisan:"+pin;
+  if(window.crypto && crypto.subtle){ const b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(txt)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+  let h=0; for(const c of txt) h=(h*31+c.charCodeAt(0))|0; return "s"+h;
+}
+const lsGet = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+const lsSet = (k,v) => { try{ localStorage.setItem(k,v); }catch(e){} };
+const ssGet = k => { try{ return sessionStorage.getItem(k); }catch(e){ return null; } };
+const ssSet = (k,v) => { try{ v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v); }catch(e){} };
+
+function pantallaAcceso(alEntrar){
+  const hayPin = !!lsGet(PIN_KEY);
+  const div = document.createElement("div"); div.id="acceso";
+  div.innerHTML = `<div class="accCaja">
+    <img src="${LOGO()}" alt="NutriSan"><div class="accMarca">NutriSan</div><div class="accTag">EQUILIBRIO · SALUD · BIENESTAR</div>
+    <div id="accPaso1">
+      <button class="accBtn" id="accProf">👩‍⚕️ Soy profesional</button>
+      <button class="accBtn sec" id="accPac">🌱 Soy paciente</button>
+    </div>
+    <div id="accProfForm" hidden>
+      <p>${hayPin?"Ingresá tu PIN de profesional":"Primera vez en este dispositivo: creá un PIN de 4 a 8 números para proteger los datos de tus pacientes."}</p>
+      <input id="accPin" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN">
+      ${hayPin?"":'<input id="accPin2" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Repetí el PIN">'}
+      <div class="accErr" id="accErr"></div>
+      <button class="accBtn" id="accEntrar">${hayPin?"Entrar":"Crear PIN y entrar"}</button>
+      <button class="accLink" id="accVolver1">← Volver</button>
+    </div>
+    <div id="accPacInfo" hidden>
+      <p><b>¿Sos paciente de NutriSan?</b></p>
+      <p>Tu nutricionista te envía por WhatsApp un <b>link personal</b>. Abrilo desde ese mensaje para ver tu progreso, tus metas y tu plan.</p>
+      <p class="accNota">Después de abrirlo, podés agregarlo a la pantalla de inicio del celular para tenerlo siempre a mano.</p>
+      <button class="accLink" id="accVolver2">← Volver</button>
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+  const $=id=>div.querySelector("#"+id), ver=(a)=>{ ["accPaso1","accProfForm","accPacInfo"].forEach(x=>$(x).hidden=x!==a); };
+  $("accProf").onclick=()=>{ ver("accProfForm"); $("accPin").focus(); };
+  $("accPac").onclick=()=>ver("accPacInfo");
+  $("accVolver1").onclick=$("accVolver2").onclick=()=>ver("accPaso1");
+  const entrar=async()=>{
+    const p=$("accPin").value.trim(), err=$("accErr"); err.textContent="";
+    if(!/^\d{4,8}$/.test(p)){ err.textContent="El PIN tiene que tener de 4 a 8 números."; return; }
+    if(!hayPin){
+      if(p!==$("accPin2").value.trim()){ err.textContent="Los dos PIN no coinciden."; return; }
+      lsSet(PIN_KEY, await hashPin(p));
+    } else if(await hashPin(p)!==lsGet(PIN_KEY)){ err.textContent="PIN incorrecto."; $("accPin").value=""; return; }
+    ssSet("nutrisan_ok","1"); div.remove(); alEntrar();
+  };
+  $("accEntrar").onclick=entrar;
+  div.querySelectorAll("input").forEach(i=>i.onkeydown=e=>{ if(e.key==="Enter") entrar(); });
+}
+function cerrarSesion(){ ssSet("nutrisan_ok",null); location.reload(); }
+function cambiarPin(){
+  if(!confirm("¿Querés cambiar el PIN de profesional? Vas a crear uno nuevo al volver a entrar. Tus pacientes no se borran.")) return;
+  try{ localStorage.removeItem(PIN_KEY); }catch(e){} cerrarSesion();
+}
+
 async function arrancar(){
   let t = location.hash.indexOf("#p=")===0 ? location.hash.slice(3) : "";
   const standalone = window.matchMedia && (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone);
@@ -887,7 +960,8 @@ async function arrancar(){
     document.head.insertAdjacentHTML("beforeend", headWeb());
     if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
   }
-  pintarProf(); renderLista(); render(); marcarEstado(db.pacientes.length? db.pacientes.length+" pacientes" : "");
+  const iniciar=()=>{ pintarProf(); renderLista(); render(); marcarEstado(db.pacientes.length? db.pacientes.length+" pacientes" : ""); };
+  if(ssGet("nutrisan_ok")==="1") iniciar(); else pantallaAcceso(iniciar);
 }
 
 arrancar();
