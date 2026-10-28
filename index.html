@@ -298,6 +298,10 @@ function calcular(p, ev){
     const hwr=talla/Math.cbrt(peso); R.hwr=hwr;
     R.ecto = hwr>=40.75 ? 0.732*hwr-28.58 : hwr>38.25 ? 0.463*hwr-17.63 : 0.1;
   }
+  // Proporciones (talla sentado y envergadura)
+  const ts=num(ev.tallaSentado), env=num(ev.envergadura);
+  if(ts&&talla){ R.icor=ts/talla*100; R.lPiernas=talla-ts; R.icorClas = R.icor<=51?["Braquicórmico (piernas largas)","na"]:R.icor<=53?["Metricórmico (intermedio)","na"]:["Macrocórmico (tronco largo)","na"]; }
+  if(env&&talla){ R.envRel=env/talla*100; }
   // Dinamometría
   const dn = ev.dina||{};
   const vals = a => (a||[]).map(num).filter(v=>v!=null);
@@ -398,7 +402,7 @@ function avisoDni(p){
   el.textContent = otro ? "⚠ Este DNI ya está cargado en: "+(otro.nombre||"otro paciente") : "";
 }
 /* ---- Evaluaciones ---- */
-const PL = [["triceps","Tríceps"],["subescapular","Subescapular"],["biceps","Bíceps"],["crestaIliaca","Cresta ilíaca"],["supraespinal","Supraespinal"],["abdominal","Abdominal"],["muslo","Muslo frontal"],["pantorrilla","Pantorrilla"]];
+const PL = [["triceps","Tríceps"],["subescapular","Subescapular"],["biceps","Bíceps"],["crestaIliaca","Cresta ilíaca"],["supraespinal","Supraespinal"],["abdominal","Abdominal"],["muslo","Muslo anterior"],["pantorrilla","Pierna medial"]];
 function vEval(p, el){
   const evs = ordenadas(p).reverse();
   if(evalEditId){ return formEval(p, el, p.evaluaciones.find(e=>e.id===evalEditId)); }
@@ -421,15 +425,17 @@ function formEval(p, el, e){
   <div class="row" style="margin-bottom:12px"><button class="btn sec" id="btnVolver">← Volver a la lista</button>
   <label style="flex-direction:row;align-items:center;gap:8px">Fecha <input type="date" data-p="fecha" value="${esc(e.fecha)}"></label></div>
   ${!p.sexo||!p.nacimiento?'<div class="card" style="background:var(--warn-soft)">⚠ Para los cálculos completos cargá el <b>sexo</b> y la <b>fecha de nacimiento</b> en la Ficha.</div>':""}
-  <div class="card"><h3>Medidas básicas</h3><div class="grid">
-    ${inp("peso","Peso","kg")}${inp("talla","Talla","cm")}${inp("paSist","Presión sistólica","mmHg","1")}${inp("paDiast","Presión diastólica","mmHg","1")}
+  <div class="card"><h3>Medidas básicas (ISAK)</h3><div class="grid">
+    ${inp("peso","Masa corporal","kg")}${inp("talla","Talla","cm")}${inp("tallaSentado","Talla sentado","cm")}${inp("envergadura","Envergadura de brazos","cm")}
   </div></div>
-  <div class="card"><h3>Perímetros (cm)</h3><div class="grid">
-    ${inp("cintura","Cintura","")}${inp("cinturaMin","Cintura mínima","")}${inp("cinturaMax","Cintura máxima","")}${inp("cadera","Cadera","")}${inp("brazoRel","Brazo relajado","")}${inp("brazoCon","Brazo flexionado y contraído","")}${inp("musloMedio","Muslo medio","")}${inp("pantorrilla","Pantorrilla","")}
-  </div><p class="note">Cintura: la que se usa para el riesgo cardiometabólico (punto medio). Mínima: la zona más estrecha. Máxima: la zona más ancha del abdomen.</p></div>
   <div class="card"><h3>Pliegues cutáneos (mm)</h3><div class="grid">${PL.map(([k,t])=>inp("pliegues."+k,t,"")).join("")}</div>
-    <p class="note">% de grasa (Durnin y Womersley): bíceps + tríceps + subescapular + cresta ilíaca. Somatotipo: tríceps, subescapular, supraespinal y pantorrilla. Σ6: tríceps, subescapular, supraespinal, abdominal, muslo y pantorrilla.</p></div>
-  <div class="card"><h3>Diámetros óseos (cm)</h3><div class="grid">${inp("diam.humero","Biepicondíleo de húmero","")}${inp("diam.femur","Biepicondíleo de fémur","")}${inp("diam.muneca","Biestiloideo (muñeca)","")}</div></div>
+    <p class="note">% de grasa (Durnin y Womersley): bíceps + tríceps + subescapular + cresta ilíaca. Somatotipo: tríceps, subescapular, supraespinal y pierna medial. Σ6: tríceps, subescapular, supraespinal, abdominal, muslo anterior y pierna medial.</p></div>
+  <div class="card"><h3>Perímetros (cm)</h3><div class="grid">
+    ${inp("brazoRel","Brazo relajado","")}${inp("brazoCon","Brazo flexionado y contraído","")}${inp("cintura","Cintura","")}${inp("cadera","Caderas","")}${inp("musloMedio","Muslo medio","")}${inp("pantorrilla","Pierna","")}
+  </div><div class="subt">Cintura complementaria</div><div class="grid">${inp("cinturaMin","Cintura mínima","")}${inp("cinturaMax","Cintura máxima","")}</div>
+  <p class="note">Cintura: la que se usa para el riesgo cardiometabólico. Mínima: la zona más estrecha. Máxima: la zona más ancha del abdomen.</p></div>
+  <div class="card"><h3>Diámetros óseos (cm)</h3><div class="grid">${inp("diam.humero","Biepicondíleo del húmero","")}${inp("diam.muneca","Biestiloideo (muñeca)","")}${inp("diam.femur","Biepicondíleo del fémur","")}</div></div>
+  <div class="card"><h3>Presión arterial</h3><div class="grid">${inp("paSist","Presión sistólica","mmHg","1")}${inp("paDiast","Presión diastólica","mmHg","1")}</div></div>
   <div class="card"><h3>Dinamometría (fuerza de prensión manual, kg)</h3>
     <div class="grid">
       ${[0,1,2].map(i=>inp("dina.der."+i,"Derecha – intento "+(i+1),"")).join("")}
@@ -461,6 +467,9 @@ function htmlResultados(p,e){
   if(R.s6!=null) h+=caja("Σ6 pliegues", r1(R.s6)+" mm");
   if(num(e.paSist)&&num(e.paDiast)){ const s=num(e.paSist), d=num(e.paDiast); h+=caja("Presión arterial", s+"/"+d+" mmHg", s>=140||d>=90?["Elevada (≥140/90)","bad"]:s>=130||d>=85?["Normal alta","warn"]:["Normal","ok"]); }
   h+=`</div>`+htmlObs(itemsAntro(p,e,"comp"));
+  if(R.icor!=null||R.envRel!=null){
+    h+=`<div class="subt">Proporciones</div><div class="res">${R.icor!=null?caja("Índice córmico", r1(R.icor), R.icorClas, "Talla sentado / talla × 100")+caja("Longitud de piernas", r1(R.lPiernas)+" cm"):""}${R.envRel!=null?caja("Envergadura relativa", r1(R.envRel)+"%", null, "Envergadura "+r1(num(e.envergadura))+" cm ("+(num(e.envergadura)-num(e.talla)>0?"+":"")+r1(num(e.envergadura)-num(e.talla))+" cm respecto de la talla)"):""}</div>`;
+  }
   if(R.endo!=null||R.meso!=null||R.ecto!=null){
     h+=`<div class="subt">Somatotipo (Heath-Carter)</div><div class="res">${caja("Endomorfia",r1(R.endo))}${caja("Mesomorfia",r1(R.meso), null, R.meso==null?"Faltan diámetros, brazo contraído o pantorrilla":"")}${caja("Ectomorfia",r1(R.ecto),null,"Índice ponderal: "+r1(R.hwr))}</div>`+htmlObs(itemsAntro(p,e,"som"));
   }
