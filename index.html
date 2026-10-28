@@ -74,6 +74,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 .obs .obsT{font-weight:700;font-size:13px;color:var(--accent);margin-bottom:4px}.obs .obsT span{font-weight:400;color:var(--muted)}
 .obs p{margin:4px 0 0}.obs ul{margin:4px 0 6px;padding-left:20px}.obs li{margin:2px 0}
 .obsM>b{color:var(--ok)}.obsP>b{color:var(--warn)}
+.obs .obsMot{margin:8px 0 0;padding:8px 10px;background:#fff;border-radius:8px;border-left:3px solid var(--accent);font-style:italic}
 #print-area{display:none}
 .pa-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid var(--accent);padding-bottom:8px}
 .pa-page h1{font-size:20px;margin:0}
@@ -483,24 +484,51 @@ function htmlResultados(p,e){
 /* ---- Observación automática: qué mejoró y qué falta mejorar ---- */
 const fmtV = v => Math.abs(v)<10 ? r2(v) : r1(v);
 // items: {n, a (anterior), b (actual), u, mejor (-1 bajar / +1 subir / 0 sin dirección), umbral, clas, fmt}
+let OBS_P=null; // paciente de la última lista de ítems (para personalizar el mensaje)
 function htmlObs(items, titulo="Observación automática", pac=false){
   items=items.filter(it=>it.b!=null); if(!items.length) return "";
-  const M=[], P=[], hayPrev=items.some(it=>it.a!=null);
+  const M=[], P=[], nM=[], nP=[], hayPrev=items.some(it=>it.a!=null);
   items.forEach(it=>{
     const f=it.fmt||fmtV, F=v=>f(v)+(it.u?" "+it.u:"");
     const d = it.a!=null ? it.b-it.a : null;
     const cambio = d!=null && it.mejor && Math.abs(d)>=it.umbral ? Math.sign(d)===it.mejor : null;
     const malo = it.clas && (it.clas[1]==="warn"||it.clas[1]==="bad");
     const txtD = d!=null ? `${d>0?"subió":"bajó"} ${F(Math.abs(d))} (de ${F(it.a)} a ${F(it.b)})` : "";
-    if(cambio===true) M.push(`<b>${it.n}</b>: ${txtD}`);
-    if(cambio===false) P.push(`<b>${it.n}</b>: ${txtD}${malo?" · "+esc(it.clas[0]):""}`);
-    else if(malo) P.push(`<b>${it.n}</b>: ${F(it.b)} · ${esc(it.clas[0])}`);
+    if(cambio===true){ M.push(`<b>${it.n}</b>: ${txtD}`); nM.push({n:it.n, txt:`${d>0?"subió":"bajó"} ${F(Math.abs(d))}`}); }
+    if(cambio===false){ P.push(`<b>${it.n}</b>: ${txtD}${malo?" · "+esc(it.clas[0]):""}`); nP.push(it.n); }
+    else if(malo){ P.push(`<b>${it.n}</b>: ${F(it.b)} · ${esc(it.clas[0])}`); nP.push(it.n); }
   });
-  if(!M.length && !P.length) return `<div class="obs"><div class="obsT">${titulo}</div><p>✓ ${hayPrev?"Sin cambios importantes respecto del control anterior y todo dentro de valores adecuados.":"Todos los valores cargados están dentro de lo adecuado."}</p></div>`;
+  const mot = `<p class="obsMot">💬 ${mensajeMotivador(nM, [...new Set(nP)], hayPrev, OBS_P)}</p>`;
+  if(!M.length && !P.length) return `<div class="obs"><div class="obsT">${titulo}</div><p>✓ ${hayPrev?"Sin cambios importantes respecto del control anterior y todo dentro de valores adecuados.":"Todos los valores cargados están dentro de lo adecuado."}</p>${mot}</div>`;
   return `<div class="obs"><div class="obsT">${titulo}${hayPrev?"":" <span>(sin un control anterior comparable)</span>"}</div>`
     + (M.length?`<div class="obsM"><b>✓ ${pac?"Lo que mejoró":"Mejoró"}</b><ul>${M.map(x=>`<li>${x}</li>`).join("")}</ul></div>`:"")
-    + (P.length?`<div class="obsP"><b>⚑ ${pac?"Para seguir trabajando":"Para mejorar"}</b><ul>${P.map(x=>`<li>${x}</li>`).join("")}</ul></div>`:"") + `</div>`;
+    + (P.length?`<div class="obsP"><b>⚑ ${pac?"Para seguir trabajando":"Para mejorar"}</b><ul>${P.map(x=>`<li>${x}</li>`).join("")}</ul></div>`:"") + mot + `</div>`;
 }
+// Mensaje para animar al paciente: destaca lo logrado y marca el próximo objetivo
+function mensajeMotivador(nM, nP, hayPrev, p){
+  // "IMC" y "HbA1c" quedan igual; "Cintura" pasa a "cintura"; se quita lo que va entre paréntesis
+  const corto = t => { t=t.replace(/\s*\(.*?\)/g,""); return /^[A-ZÁÉÍÓÚΣ][a-záéíóúñ]/.test(t) ? t[0].toLowerCase()+t.slice(1) : t; };
+  const lista = a => { const x=a.slice(0,3).map(corto); return x.length>1 ? x.slice(0,-1).join(", ")+" y "+x[x.length-1] : x[0]||""; };
+  const nom = esc(((p&&p.nombre)||"").trim().split(/\s+/)[0]||""), N = nom?nom+", ":"";
+  const fem = p&&p.sexo==="F", listo = fem?"lista":"listo";
+  const elegir = arr => arr[(nM.length*3+nP.length+(nom.length||0))%arr.length];
+  const pend = nP.filter(n=>!nM.some(m=>m.n===n)), sigue = nP.filter(n=>nM.some(m=>m.n===n));
+  const logro = nM.length ? `tu ${corto(nM[0].n)} ${nM[0].txt}${nM.length>1?` y también mejoraste en ${lista(nM.slice(1).map(m=>m.n))}`:""}` : "";
+  const foco = [pend.length?"mejorar "+lista(pend):"", sigue.length?`seguir mejorando ${lista(sigue)} hasta llegar a valores saludables`:""].filter(Boolean).join(" y ");
+  if(nM.length && nP.length) return elegir([
+    `¡${N}muy buen trabajo! ${cap(logro)}. Ahora el desafío es ${foco}: con la misma constancia lo vas a lograr.`,
+    `¡Felicitaciones${nom?", "+nom:""}! ${cap(logro)}, y eso demuestra que el camino funciona. Sigamos enfocándonos en ${foco}, paso a paso.`,
+    `${N}lo que lograste es fruto de tu esfuerzo: ${logro}. Todavía queda ${foco}, pero vas por muy buen camino. ¡Seguí así!`]);
+  if(nM.length) return elegir([
+    `¡Excelente, ${nom||"muy bien"}! ${cap(logro)} y todo está en valores adecuados. Seguí con estos hábitos: están dando resultado.`,
+    `¡Qué buen control${nom?", "+nom:""}! ${cap(logro)}. Mantener lo logrado también es un gran objetivo. ¡A seguir así!`]);
+  if(nP.length && hayPrev) return elegir([
+    `${N}cada control nos da información para ajustar el plan. Vamos a enfocarnos en ${lista(nP)}: los cambios pequeños y sostenidos son los que más resultados dan.`,
+    `${N}los procesos no siempre son en línea recta, y está bien. Pongamos el foco en ${lista(nP)}; con constancia los resultados llegan.`]);
+  if(nP.length) return `${N}este es tu punto de partida y ya sabemos dónde enfocarnos: ${lista(nP)}. Cada paso que des va a sumar. ¡Empezamos juntos!`;
+  return hayPrev ? `¡Muy bien${nom?", "+nom:""}! Mantener los valores en rango es un logro. Seguí con tus buenos hábitos.` : `¡Muy buen comienzo${nom?", "+nom:""}! Tus valores están en rango; el objetivo es mantenerlos. ¡Estás ${listo} para seguir!`;
+}
+const cap = t => t ? t[0].toUpperCase()+t.slice(1) : t;
 const evPrevia = (p,e) => { const o=ordenadas(p), i=o.findIndex(x=>x.id===e.id); return i>0?o[i-1]:null; };
 // Hacia dónde conviene que vaya el peso: según el peso objetivo o, si no hay, según el IMC
 function dirPeso(p, R, peso){
@@ -509,6 +537,7 @@ function dirPeso(p, R, peso){
   if(R.imc==null) return 0; return R.imc>=25?-1:R.imc<18.5?1:0;
 }
 function itemsAntro(p, e, grupo){
+  OBS_P=p;
   const a=evPrevia(p,e), A=a||{}, R=calcular(p,e), Ra=a?calcular(p,a):{};
   const it=(n,av,bv,u,mejor,umbral,clas=null,fmt)=>({n,a:av??null,b:bv??null,u,mejor,umbral,clas,fmt});
   if(grupo==="comp"){
@@ -569,6 +598,7 @@ function calcularLab(p, l){
   return {V, ay, items};
 }
 function itemsLab(p, l, g){
+  OBS_P=p;
   const C1=calcularLab(p,l), a=labPrevio(p,l), C0=a?calcularLab(p,a):null;
   return C1.items.filter(x=>x.g===g).map(x=>{
     let av = C0 ? C0.V[x.k] : null;
@@ -983,6 +1013,7 @@ footer .prof{font-size:14px;color:var(--ink);margin-bottom:8px}
 .obs{margin:10px 0 6px;border:1px dashed var(--cream);border-radius:14px;padding:10px 12px;background:var(--cream-soft);font-size:14.5px}
 .obs .obsT{font-weight:700;font-size:13px;color:var(--olive);margin-bottom:4px}.obs .obsT span{font-weight:400;color:var(--muted)}
 .obs p{margin:4px 0 0}.obs ul{margin:4px 0 6px;padding-left:20px}.obs li{margin:3px 0}.obsM>b{color:var(--olive)}.obsP>b{color:var(--warn)}
+.obs .obsMot{margin:8px 0 0;padding:9px 11px;background:#fff;border-radius:10px;border-left:3px solid var(--olive);font-style:italic}
 .nov{display:flex;gap:12px;align-items:flex-start}.nov .ni{font-size:26px;line-height:1}.nov .nt{font-weight:700;font-size:16px;margin-top:3px}
 @media (max-width:360px){.stats,.res{grid-template-columns:1fr}}
 @media print{header{border-radius:0}.wa,.instalar{display:none}}
