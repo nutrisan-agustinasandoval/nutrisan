@@ -215,7 +215,7 @@ const PROFESIONAL = "Lic. Agustina Ayelén Sandoval";
 const WEB_NUTRISAN = "https://nutrisan-agustinasandoval.github.io/nutrisan/";
 let db = cargar();
 db.profesional = Object.assign({}, db.profesional, {nombre: PROFESIONAL});
-if(!db.profesional.web) db.profesional.web = WEB_NUTRISAN;
+if(!db.profesional.web || /victornavarro854-hue\.github\.io/.test(db.profesional.web)) db.profesional.web = WEB_NUTRISAN;
 let selId = null, tabActual = "ficha", evalEditId = null, labEditId = null;
 let fileHandle = null;
 
