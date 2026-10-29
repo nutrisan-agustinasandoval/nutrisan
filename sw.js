@@ -1,5 +1,5 @@
 // Guarda una copia de NutriSan para que abra aunque no haya internet
-const CACHE = "nutrisan-v6";
+const CACHE = "nutrisan-v7";
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(["./", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/apple-touch-icon.png"])));
   self.skipWaiting();
