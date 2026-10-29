@@ -68,7 +68,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 .subt{font-size:13px;font-weight:700;margin:14px 0 6px;color:var(--accent)}
 dialog{border:none;border-radius:14px;padding:20px;max-width:460px;width:92%}
 dialog::backdrop{background:rgba(0,0,0,.35)}
-#dlgNov{max-width:640px}
+#dlgNov{max-width:640px}#dlgRef{max-width:760px}
 .novFila{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px}
 .obs{margin:10px 0 6px;border:1px dashed var(--cream);border-radius:10px;padding:10px 12px;background:var(--cream-soft);font-size:14px}
 .obs .obsT{font-weight:700;font-size:13px;color:var(--accent);margin-bottom:4px}.obs .obsT span{font-weight:400;color:var(--muted)}
@@ -165,6 +165,7 @@ aside .tools{background:var(--cream-soft)}
   <button id="btnExport">Guardar copia</button>
   <button id="btnImport">Abrir copia</button>
   <button id="btnNov">Novedades</button>
+  <button id="btnRef">Referidos</button>
   <button id="btnConfig">Mis datos</button>
   <button id="btnPin">Cambiar PIN</button>
   <button id="btnSalir">Salir 🔒</button>
@@ -200,6 +201,17 @@ aside .tools{background:var(--cream-soft)}
   </div>
 </dialog>
 
+<dialog id="dlgRef">
+  <h3 style="margin-top:0">Referidos y promociones</h3>
+  <p class="note">Cada paciente tiene un código de invitación (lo ve en su portal). Cuando llega alguien recomendado, cargá ese código en su Ficha, en "Llegó recomendado por".</p>
+  <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr))">
+    <label>Descuento por cada referido (%)<input type="number" step="0.5" min="0" id="refPct"></label>
+    <label>Descuento máximo acumulable (%)<input type="number" step="1" min="0" id="refTope"></label>
+  </div>
+  <label style="display:block;margin-top:8px">Texto de la promoción (lo ve el paciente)<textarea id="refTexto" style="width:100%"></textarea></label>
+  <div id="refResumen" style="margin-top:12px"></div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" onclick="dlgRef.close()">Listo</button></div>
+</dialog>
 <dialog id="dlgNov">
   <h3 style="margin-top:0">Novedades para pacientes</h3>
   <p class="note">Descuentos, recomendaciones generales, avisos… Se ven en el portal de <b>todos</b> los pacientes cuando les enviás (o reenviás) su link. Si ponés fecha "hasta", deja de mostrarse después de ese día.</p>
@@ -372,7 +384,9 @@ function vFicha(p, el){
     <label>Fecha de nacimiento<input type="date" data-f="nacimiento" value="${esc(p.nacimiento)}"></label>
     <label>Teléfono<input data-f="telefono" value="${esc(p.telefono)}"></label>
     <label>Ocupación<input data-f="ocupacion" value="${esc(p.ocupacion)}"></label>
-  </div><p class="note">Edad actual: ${p.nacimiento?edadEn(p.nacimiento)+" años":"–"}</p></div>
+    <label>Llegó recomendado por (código)<input data-f="referidoPor" list="dlCodigos" placeholder="Ej.: NS-MARIA-4821" value="${esc(p.referidoPor)}"><span id="refAviso" class="note"></span></label>
+  </div><datalist id="dlCodigos">${db.pacientes.filter(x=>x.id!==p.id).map(x=>`<option value="${esc(codigoRef(x))}">${esc(x.nombre||"")}</option>`).join("")}</datalist>
+  <p class="note">Edad actual: ${p.nacimiento?edadEn(p.nacimiento)+" años":"–"} · Código de invitación de este paciente: <b>${esc(codigoRef(p))}</b> (${refInfo(p).cant} referido/s)</p></div>
   <div class="card"><h3>Antecedentes y enfermedades crónicas</h3>
     <div class="checks">${ANTEC.map(a=>`<label><input type="checkbox" data-a="${esc(a)}" ${(p.antecedentes||[]).includes(a)?"checked":""}> ${esc(a)}</label>`).join("")}</div>
     <div class="grid" style="margin-top:12px;grid-template-columns:1fr 1fr">
@@ -387,7 +401,8 @@ function vFicha(p, el){
     <label style="grid-column:1/-1">Notas<textarea data-f="notas">${esc(p.notas)}</textarea></label>
   </div></div>
   <div class="row"><button class="btn del" id="btnBorrarPac">Eliminar paciente</button></div>`;
-  el.querySelectorAll("[data-f]").forEach(i=>i.oninput=i.onchange=()=>{ p[i.dataset.f]=i.value; guardar(); if(["nombre","codigo","nacimiento","dni"].includes(i.dataset.f)) renderLista(); if(i.dataset.f==="dni") avisoDni(p); });
+  el.querySelectorAll("[data-f]").forEach(i=>i.oninput=i.onchange=()=>{ p[i.dataset.f]=i.value; guardar(); if(["nombre","codigo","nacimiento","dni"].includes(i.dataset.f)) renderLista(); if(i.dataset.f==="dni") avisoDni(p); if(i.dataset.f==="referidoPor") avisoRef(p); });
+  avisoRef(p);
   avisoDni(p);
   el.querySelectorAll("[data-a]").forEach(c=>c.onchange=()=>{ p.antecedentes=[...el.querySelectorAll("[data-a]:checked")].map(x=>x.dataset.a); guardar(); });
   el.querySelector("#btnBorrarPac").onclick=()=>{
@@ -655,6 +670,41 @@ function graficosLab(p){
 
 /* ---- Novedades (para todos los pacientes) ---- */
 const TIPOS_NOV=[["desc","🏷️","Descuento / promoción"],["rec","💡","Recomendación"],["aviso","📣","Aviso"]];
+/* ---- Referidos y promociones ---- */
+const refConfig = () => Object.assign({pct:5, tope:50, texto:"Recomendá NutriSan: por cada persona que empiece su tratamiento con tu código, sumás un descuento en tus consultas."}, db.referidos||{});
+const normCod = c => String(c||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+function codigoRef(p){
+  if(!p.codigoRef){
+    const base = ((p.nombre||"").normalize("NFD").replace(/[^A-Za-z]/g,"").toUpperCase().slice(0,5)) || "PAC";
+    let c; do { c = "NS-"+base+"-"+Math.floor(1000+Math.random()*9000); } while(db.pacientes.some(x=>x!==p && normCod(x.codigoRef)===normCod(c)));
+    p.codigoRef = c; guardar();
+  }
+  return p.codigoRef;
+}
+// Cuántos llegaron con el código de este paciente y qué descuento tiene disponible
+function refInfo(p){
+  if(p._ref) return p._ref; // portal del paciente: ya viene calculado
+  const cfg=refConfig(), cod=normCod(codigoRef(p));
+  const lista=db.pacientes.filter(x=>x!==p && x.referidoPor && normCod(x.referidoPor)===cod);
+  const pend=Math.max(0, lista.length-(p.refCanjeados||0));
+  return {codigo:p.codigoRef, cant:lista.length, nombres:lista.map(x=>x.nombre||""), pend, desc:Math.min(num(cfg.tope)??100, pend*(num(cfg.pct)||0)), pct:num(cfg.pct)||0, tope:num(cfg.tope), texto:cfg.texto};
+}
+function avisoRef(p){
+  const el=document.getElementById("refAviso"); if(!el) return; const c=normCod(p.referidoPor);
+  if(!c){ el.textContent=""; return; }
+  const q=db.pacientes.find(x=>x!==p && normCod(x.codigoRef)===c);
+  el.textContent = q ? "✓ Recomendado por "+(q.nombre||"otro paciente") : "⚠ No hay ningún paciente con ese código";
+  el.style.color = q ? "var(--ok)" : "var(--bad)";
+}
+function pintarRef(){
+  const cfg=refConfig(), ps=db.pacientes, llegaron=ps.filter(x=>x.referidoPor && ps.some(q=>q!==x && normCod(q.codigoRef)===normCod(x.referidoPor)));
+  const filas=ps.map(x=>({p:x, r:refInfo(x)})).filter(x=>x.r.cant>0).sort((a,b)=>b.r.cant-a.r.cant);
+  const c=document.getElementById("refResumen");
+  c.innerHTML = `<div class="res">${caja("Pacientes", ps.length)}${caja("Llegaron por recomendación", llegaron.length, null, ps.length?Math.round(llegaron.length/ps.length*100)+"% del total":"")}${caja("Pacientes que recomendaron", filas.length)}</div>
+   ${filas.length?`<div style="overflow-x:auto;margin-top:10px"><table><tr><th>Paciente</th><th>Código</th><th>Referidos</th><th>Descuento disponible</th><th></th></tr>${filas.map(({p:x,r})=>`<tr><td>${esc(x.nombre||"")}<div class="note">${r.nombres.map(esc).join(", ")}</div></td><td>${esc(r.codigo)}</td><td>${r.cant}${x.refCanjeados?` <span class="note">(${x.refCanjeados} ya usados)</span>`:""}</td><td><b>${r1(r.desc)}%</b></td><td>${r.pend?`<button class="btn sec" data-canje="${x.id}">Marcar como usado</button>`:""}</td></tr>`).join("")}</table></div>`
+   :'<p class="note">Todavía nadie llegó por recomendación.</p>'}`;
+  c.querySelectorAll("[data-canje]").forEach(b=>b.onclick=()=>{ const x=ps.find(q=>q.id===b.dataset.canje); if(confirm("¿Marcar como usado el descuento de "+(x.nombre||"este paciente")+"? Vuelve a 0% y se suma de nuevo con los próximos referidos.")){ x.refCanjeados=refInfo(x).cant; guardar(); pintarRef(); } });
+}
 const novVigentes = () => (db.novedades||[]).filter(n=>((n.titulo||"").trim()||(n.texto||"").trim()) && (!n.hasta || n.hasta>=hoy()));
 function pintarNov(){
   const c=document.getElementById("novLista"), L=db.novedades=db.novedades||[];
@@ -935,6 +985,16 @@ function htmlPaciente(p, opts={}){
     const ul=labs[labs.length-1], lh=htmlLabRes(p,ul,true);
     if(lh) h += `<h2>Tus análisis de sangre</h2><section class="card">${lh}<p class="note">Análisis del ${fmtF(ul.fecha)} (${ul.ayuno==="no"?"sin ayuno":"en ayunas"}). Tu nutricionista te explica los resultados en la consulta.</p></section>`;
   }
+  // Invitá a un amigo
+  const rf=refInfo(p);
+  if(rf.codigo){
+    const wa=soloNum(pf.whatsapp), txt="¡Hola! Te recomiendo NutriSan, con la "+(pf.nombre||"nutricionista")+". Al pedir turno, decí mi código "+rf.codigo+(wa?" y escribí a https://wa.me/"+wa:"")+".";
+    h += `<h2>Invitá a un amigo</h2><section class="card ref"><div class="k">Tu código de invitación</div><div class="cod">${esc(rf.codigo)}</div>
+      ${(rf.texto||"").trim()?`<p>${esc(rf.texto)}</p>`:""}
+      <p class="note">Por cada persona que empiece con tu código sumás <b>${r1(rf.pct)}%</b> de descuento${rf.tope!=null?` (hasta ${r1(rf.tope)}%)`:""}.</p>
+      <div class="refst"><div><b>${rf.cant}</b><span>amigos se sumaron</span></div><div><b>${r1(rf.desc)}%</b><span>descuento disponible</span></div></div>
+      <a class="wa" href="https://wa.me/?text=${encodeURIComponent(txt)}">📲 Compartir mi código por WhatsApp</a></section>`;
+  }
   // Metas
   const metas=(po.metas||[]).filter(m=>(m.texto||"").trim());
   if(metas.length){
@@ -1014,6 +1074,9 @@ footer .prof{font-size:14px;color:var(--ink);margin-bottom:8px}
 .obs .obsT{font-weight:700;font-size:13px;color:var(--olive);margin-bottom:4px}.obs .obsT span{font-weight:400;color:var(--muted)}
 .obs p{margin:4px 0 0}.obs ul{margin:4px 0 6px;padding-left:20px}.obs li{margin:3px 0}.obsM>b{color:var(--olive)}.obsP>b{color:var(--warn)}
 .obs .obsMot{margin:8px 0 0;padding:9px 11px;background:#fff;border-radius:10px;border-left:3px solid var(--olive);font-style:italic}
+.ref .cod{font-size:26px;font-weight:800;letter-spacing:.06em;color:var(--olive-d);background:var(--cream-soft);border:2px dashed var(--cream);border-radius:12px;text-align:center;padding:10px;margin:8px 0}
+.ref p{margin:8px 0 0}.refst{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}.refst div{background:var(--ok-soft);border-radius:12px;padding:10px;text-align:center}.refst b{display:block;font-size:22px;color:var(--olive-d)}.refst span{font-size:12.5px;color:var(--muted)}
+.ref .wa{margin:0}
 .nov{display:flex;gap:12px;align-items:flex-start}.nov .ni{font-size:26px;line-height:1}.nov .nt{font-weight:700;font-size:16px;margin-top:3px}
 @media (max-width:360px){.stats,.res{grid-template-columns:1fr}}
 @media print{header{border-radius:0}.wa,.instalar{display:none}}
@@ -1054,6 +1117,10 @@ document.getElementById("btnArchivo").onclick=async()=>{
     await escribirArchivo(); alert("Listo: mientras esta ventana esté abierta, cada cambio se guarda también en ese archivo. Al abrir la app otra vez, volvé a elegir el mismo archivo.");
   }catch(e){}
 };
+const dlgRef=document.getElementById("dlgRef");
+document.getElementById("btnRef").onclick=()=>{ db.pacientes.forEach(codigoRef); const c=refConfig(); refPct.value=c.pct; refTope.value=c.tope; refTexto.value=c.texto; pintarRef(); dlgRef.showModal(); };
+["refPct","refTope","refTexto"].forEach(id=>document.getElementById(id).oninput=()=>{ db.referidos={pct:refPct.value, tope:refTope.value, texto:refTexto.value}; guardar(); pintarRef(); });
+dlgRef.addEventListener("close", ()=>{ if(pac()) render(); });
 const dlgNov=document.getElementById("dlgNov");
 document.getElementById("btnNov").onclick=()=>{ pintarNov(); dlgNov.showModal(); };
 document.getElementById("novAgregar").onclick=()=>{ (db.novedades=db.novedades||[]).push({id:uid(), tipo:"desc", titulo:"", texto:"", hasta:""}); guardar(); pintarNov(); const t=document.querySelectorAll('#novLista [data-nc="titulo"]'); if(t.length) t[t.length-1].focus(); };
@@ -1089,7 +1156,7 @@ function datosParaPaciente(p){
     p:{id:p.id, nombre:p.nombre, sexo:p.sexo, nacimiento:p.nacimiento,
        evaluaciones:(p.evaluaciones||[]).map(e=>{ const c=Object.assign({},e); delete c.notas; return c; }),
        laboratorios: portalDe(p).incluirLaboratorio!==false ? (p.laboratorios||[]).map(l=>{ const c=Object.assign({},l); delete c.notas; return c; }) : [],
-       plan:p.plan?{comidas:p.plan.comidas, recomendaciones:p.plan.recomendaciones}:null, portal:portalDe(p)}};
+       plan:p.plan?{comidas:p.plan.comidas, recomendaciones:p.plan.recomendaciones}:null, portal:portalDe(p), _ref:(()=>{ const r=refInfo(p); delete r.nombres; return r; })()}};
 }
 const baseWeb = () => { const w=((db.profesional||{}).web||"").trim(); if(w) return w.split("#")[0]; return /^https?:/.test(location.protocol)? location.origin+location.pathname : ""; };
 /* ---- Link del paciente protegido con su DNI (cifrado AES-GCM; el DNI nunca viaja en el link) ---- */
