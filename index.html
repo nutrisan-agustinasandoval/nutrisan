@@ -45,6 +45,7 @@ textarea{min-height:64px;resize:vertical}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600}
 .btn.sec{background:#fff;color:var(--accent);border:1px solid var(--accent)}
 .btn.del{background:#fff;color:var(--bad);border:1px solid var(--bad)}
+.btn.wa{background:#25d366;border:1px solid #25d366;color:#fff}
 .btn:hover{filter:brightness(1.05)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .checks{display:flex;flex-wrap:wrap;gap:6px 16px}
@@ -464,10 +465,11 @@ function formEval(p, el, e){
     </div><p class="note">Se toma el mejor intento de cada mano.</p></div>
   <div class="card"><h3>Observaciones</h3><textarea data-p="notas" style="width:100%">${esc(e.notas)}</textarea></div>
   <div class="card"><h3>Resultados</h3><div id="resultados"></div></div>
-  <div class="row"><button class="btn" id="btnListo">Listo</button><button class="btn del" id="btnBorrarEval">Eliminar evaluación</button></div>`;
+  <div class="row"><button class="btn" id="btnListo">Listo</button><button class="btn wa" id="btnWaEval">📲 Enviar por WhatsApp</button><button class="btn del" id="btnBorrarEval">Eliminar evaluación</button>${avisoTel(p)}</div>`;
   const pintar=()=>{ document.getElementById("resultados").innerHTML = htmlResultados(p,e); };
   el.querySelectorAll("[data-p]").forEach(i=>i.oninput=i.onchange=()=>{ setP(e,i.dataset.p,i.value); guardar(); pintar(); });
   el.querySelector("#btnVolver").onclick=el.querySelector("#btnListo").onclick=()=>{evalEditId=null; renderLista(); render();};
+  el.querySelector("#btnWaEval").onclick=()=>enviarWa(p, waTextoEval(p,e));
   el.querySelector("#btnBorrarEval").onclick=()=>{ if(confirm("¿Eliminar esta evaluación?")){ p.evaluaciones=p.evaluaciones.filter(x=>x.id!==e.id); evalEditId=null; guardar(); render(); } };
   pintar();
 }
@@ -504,8 +506,9 @@ function htmlResultados(p,e){
 const fmtV = v => Math.abs(v)<10 ? r2(v) : r1(v);
 // items: {n, a (anterior), b (actual), u, mejor (-1 bajar / +1 subir / 0 sin dirección), umbral, clas, fmt}
 let OBS_P=null; // paciente de la última lista de ítems (para personalizar el mensaje)
-function htmlObs(items, titulo="Observación automática", pac=false){
-  items=items.filter(it=>it.b!=null); if(!items.length) return "";
+// Calcula qué mejoró y qué falta mejorar (texto sin formato, sirve para la pantalla y para WhatsApp)
+function obsCalc(items){
+  items=items.filter(it=>it.b!=null); if(!items.length) return null;
   const M=[], P=[], nM=[], nP=[], hayPrev=items.some(it=>it.a!=null);
   items.forEach(it=>{
     const f=it.fmt||fmtV, F=v=>f(v)+(it.u?" "+it.u:"");
@@ -513,11 +516,16 @@ function htmlObs(items, titulo="Observación automática", pac=false){
     const cambio = d!=null && it.mejor && Math.abs(d)>=it.umbral ? Math.sign(d)===it.mejor : null;
     const malo = it.clas && (it.clas[1]==="warn"||it.clas[1]==="bad");
     const txtD = d!=null ? `${d>0?"subió":"bajó"} ${F(Math.abs(d))} (de ${F(it.a)} a ${F(it.b)})` : "";
-    if(cambio===true){ M.push(`<b>${it.n}</b>: ${txtD}`); nM.push({n:it.n, txt:`${d>0?"subió":"bajó"} ${F(Math.abs(d))}`}); }
-    if(cambio===false){ P.push(`<b>${it.n}</b>: ${txtD}${malo?" · "+esc(it.clas[0]):""}`); nP.push(it.n); }
-    else if(malo){ P.push(`<b>${it.n}</b>: ${F(it.b)} · ${esc(it.clas[0])}`); nP.push(it.n); }
+    if(cambio===true){ M.push({n:it.n, t:txtD}); nM.push({n:it.n, txt:`${d>0?"subió":"bajó"} ${F(Math.abs(d))}`}); }
+    if(cambio===false){ P.push({n:it.n, t:`${txtD}${malo?" · "+it.clas[0]:""}`}); nP.push(it.n); }
+    else if(malo){ P.push({n:it.n, t:`${F(it.b)} · ${it.clas[0]}`}); nP.push(it.n); }
   });
-  const mot = `<p class="obsMot">💬 ${mensajeMotivador(nM, [...new Set(nP)], hayPrev, OBS_P)}</p>`;
+  return {M, P, hayPrev, mot:mensajeMotivador(nM, [...new Set(nP)], hayPrev, OBS_P)};
+}
+function htmlObs(items, titulo="Observación automática", pac=false){
+  const o=obsCalc(items); if(!o) return "";
+  const {hayPrev}=o, M=o.M.map(x=>`<b>${x.n}</b>: ${esc(x.t)}`), P=o.P.map(x=>`<b>${x.n}</b>: ${esc(x.t)}`);
+  const mot = `<p class="obsMot">💬 ${o.mot}</p>`;
   if(!M.length && !P.length) return `<div class="obs"><div class="obsT">${titulo}</div><p>✓ ${hayPrev?"Sin cambios importantes respecto del control anterior y todo dentro de valores adecuados.":"Todos los valores cargados están dentro de lo adecuado."}</p>${mot}</div>`;
   return `<div class="obs"><div class="obsT">${titulo}${hayPrev?"":" <span>(sin un control anterior comparable)</span>"}</div>`
     + (M.length?`<div class="obsM"><b>✓ ${pac?"Lo que mejoró":"Mejoró"}</b><ul>${M.map(x=>`<li>${x}</li>`).join("")}</ul></div>`:"")
@@ -548,6 +556,51 @@ function mensajeMotivador(nM, nP, hayPrev, p){
   return hayPrev ? `¡Muy bien${nom?", "+nom:""}! Mantener los valores en rango es un logro. Seguí con tus buenos hábitos.` : `¡Muy buen comienzo${nom?", "+nom:""}! Tus valores están en rango; el objetivo es mantenerlos. ¡Estás ${listo} para seguir!`;
 }
 const cap = t => t ? t[0].toUpperCase()+t.slice(1) : t;
+
+/* ---- Enviar una evaluación o un análisis por WhatsApp ---- */
+const desEsc = t => String(t).replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,"&");
+function waObs(items){
+  const o=obsCalc(items); if(!o) return "";
+  let t="";
+  if(o.M.length) t+="\n✅ *Lo que mejoró*\n"+o.M.map(x=>"• "+x.n+": "+x.t).join("\n")+"\n";
+  if(o.P.length) t+="\n🎯 *Para seguir trabajando*\n"+o.P.map(x=>"• "+x.n+": "+x.t).join("\n")+"\n";
+  return t+"\n💬 "+desEsc(o.mot)+"\n";
+}
+const waVal = (n,v,clas) => v==null||v===""||Number.isNaN(v) ? "" : "• "+n+": "+v+(clas&&clas[0]?" ("+clas[0]+")":"")+"\n";
+function waTextoEval(p,e){
+  const R=calcular(p,e), nom=((p.nombre||"").trim().split(/\s+/)[0]||"");
+  let t=`*NutriSan · Tu evaluación del ${fmtF(e.fecha)}*\n¡Hola${nom?" "+nom:""}! Te comparto los resultados de tu control.\n\n📏 *Tus medidas*\n`;
+  t+=waVal("Peso", num(e.peso)!=null?r1(num(e.peso))+" kg":null);
+  t+=waVal("IMC", R.imc?r1(R.imc):null, R.imcClas);
+  if(num(e.cintura)!=null) t+=waVal("Cintura", r1(num(e.cintura))+" cm", R.cinClas);
+  if(R.ict!=null) t+=waVal("Índice cintura/talla", r2(R.ict), R.ictClas);
+  if(R.grasa!=null){ t+=waVal("% de grasa", r1(R.grasa)+"%"); t+=waVal("Masa libre de grasa", r1(R.mlg)+" kg"); }
+  if(num(e.paSist)&&num(e.paDiast)) t+=waVal("Presión arterial", num(e.paSist)+"/"+num(e.paDiast)+" mmHg");
+  if(R.dMax!=null) t+=waVal("Fuerza de prensión", r1(R.dMax)+" kg", R.dClas);
+  t+=waObs(itemsAntro(p,e,"comp").concat(R.dMax!=null?itemsAntro(p,e,"dina"):[]));
+  return t;
+}
+function waTextoLab(p,l){
+  const {items, ay}=calcularLab(p,l), nom=((p.nombre||"").trim().split(/\s+/)[0]||"");
+  let t=`*NutriSan · Tu análisis de sangre del ${fmtF(l.fecha)}*\n¡Hola${nom?" "+nom:""}! Te comparto lo que nos dice tu análisis (${ay?"en ayunas":"sin ayuno"}).\n`;
+  LAB_GR.forEach(([g,tit])=>{
+    const its=items.filter(x=>x.g===g); if(!its.length) return;
+    t+=`\n🩸 *${tit}*\n`+its.map(x=>waVal(x.n, fmtV(x.v)+(x.u?" "+x.u:""), x.clas[1]==="na"?null:x.clas)).join("");
+    t+=waObs(itemsLab(p,l,g));
+  });
+  return t;
+}
+// Abre WhatsApp con el número del paciente y el texto armado; suma el link al portal si está configurado
+async function enviarWa(p, texto){
+  let tel=soloNum(p.telefono), pf=db.profesional||{};
+  if(tel.length===10) tel="549"+tel; // número argentino sin código de país
+  const w=window.open("about:blank","_blank");
+  let url=""; if(baseWeb() && soloNum(p.dni).length>=6) url=await linkPaciente(p);
+  const txt=texto+(url?"\n📲 Mirá tu progreso completo en tu portal (entrás con tu DNI):\n"+url+"\n":"")+"\n"+(pf.nombre||PROFESIONAL);
+  const dest="https://wa.me/"+(tel.length>=10?tel:"")+"?text="+encodeURIComponent(txt);
+  if(w) w.location.href=dest; else location.href=dest;
+}
+function avisoTel(p){ return soloNum(p.telefono).length>=10 ? "" : '<span class="note">Sin teléfono completo en la Ficha: WhatsApp te va a pedir elegir el contacto.</span>'; }
 const evPrevia = (p,e) => { const o=ordenadas(p), i=o.findIndex(x=>x.id===e.id); return i>0?o[i-1]:null; };
 // Hacia dónde conviene que vaya el peso: según el peso objetivo o, si no hay, según el IMC
 function dirPeso(p, R, peso){
@@ -658,10 +711,11 @@ function formLab(p, el, l){
   ${LAB_GR.map(([g,t])=>`<div class="card"><h3>${t}</h3><div class="grid">${LAB.filter(d=>d[3]===g&&!LAB_CALC.includes(d[0])).map(d=>inp(d[0],d[1],d[2])).join("")}</div>${ayuda[g]?`<p class="note">${ayuda[g]}</p>`:""}</div>`).join("")}
   <div class="card"><h3>Observaciones</h3><textarea data-lb="notas" style="width:100%">${esc(l.notas)}</textarea></div>
   <div class="card"><h3>Resultados e interpretación</h3><div id="resLab"></div></div>
-  <div class="row"><button class="btn" id="btnListoLab">Listo</button><button class="btn del" id="btnBorrarLab">Eliminar análisis</button></div>`;
+  <div class="row"><button class="btn" id="btnListoLab">Listo</button><button class="btn wa" id="btnWaLab">📲 Enviar por WhatsApp</button><button class="btn del" id="btnBorrarLab">Eliminar análisis</button>${avisoTel(p)}</div>`;
   const pintar=()=>{ el.querySelector("#resLab").innerHTML=htmlLabRes(p,l); };
   el.querySelectorAll("[data-lb]").forEach(i=>i.oninput=i.onchange=()=>{ l[i.dataset.lb]=i.value; guardar(); pintar(); });
   el.querySelector("#btnVolverLab").onclick=el.querySelector("#btnListoLab").onclick=()=>{ labEditId=null; render(); };
+  el.querySelector("#btnWaLab").onclick=()=>enviarWa(p, waTextoLab(p,l));
   el.querySelector("#btnBorrarLab").onclick=()=>{ if(confirm("¿Eliminar este análisis?")){ p.laboratorios=p.laboratorios.filter(x=>x.id!==l.id); labEditId=null; guardar(); render(); } };
   pintar();
 }
