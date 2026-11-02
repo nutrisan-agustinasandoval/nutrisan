@@ -536,12 +536,15 @@ function mensajeMotivador(nM, nP, hayPrev, p){
   // "IMC" y "HbA1c" quedan igual; "Cintura" pasa a "cintura"; se quita lo que va entre paréntesis
   const corto = t => { t=t.replace(/\s*\(.*?\)/g,""); return /^[A-ZÁÉÍÓÚΣ][a-záéíóúñ]/.test(t) ? t[0].toLowerCase()+t.slice(1) : t; };
   const lista = a => { const x=a.slice(0,3).map(corto); return x.length>1 ? x.slice(0,-1).join(", ")+" y "+x[x.length-1] : x[0]||""; };
-  const nom = esc(((p&&p.nombre)||"").trim().split(/\s+/)[0]||""), N = nom?nom+", ":"";
+  // Dentro de una misma pantalla o mensaje, el nombre va solo en la primera observación; las siguientes siguen el diálogo con conectores
+  const k = OBS_CTX ? OBS_CTX.n++ : 0;
+  const nom = k ? "" : esc(((p&&p.nombre)||"").trim().split(/\s+/)[0]||""), N = nom?nom+", ":"";
   const fem = p&&p.sexo==="F", listo = fem?"lista":"listo";
-  const elegir = arr => arr[(nM.length*3+nP.length+(nom.length||0))%arr.length];
+  const elegir = arr => arr[(nM.length*3+nP.length+(nom.length||0)+k)%arr.length];
   const pend = nP.filter(n=>!nM.some(m=>m.n===n)), sigue = nP.filter(n=>nM.some(m=>m.n===n));
   const logro = nM.length ? `tu ${corto(nM[0].n)} ${nM[0].txt}${nM.length>1?` y también mejoraste en ${lista(nM.slice(1).map(m=>m.n))}`:""}` : "";
   const foco = [pend.length?"mejorar "+lista(pend):"", sigue.length?`seguir mejorando ${lista(sigue)} hasta llegar a valores saludables`:""].filter(Boolean).join(" y ");
+  if(k) return seguirDialogo(nM, nP, hayPrev, logro, foco, lista, elegir);
   if(nM.length && nP.length) return elegir([
     `¡${N}muy buen trabajo! ${cap(logro)}. Ahora el desafío es ${foco}: con la misma constancia lo vas a lograr.`,
     `¡Felicitaciones${nom?", "+nom:""}! ${cap(logro)}, y eso demuestra que el camino funciona. Sigamos enfocándonos en ${foco}, paso a paso.`,
@@ -556,6 +559,24 @@ function mensajeMotivador(nM, nP, hayPrev, p){
   return hayPrev ? `¡Muy bien${nom?", "+nom:""}! Mantener los valores en rango es un logro. Seguí con tus buenos hábitos.` : `¡Muy buen comienzo${nom?", "+nom:""}! Tus valores están en rango; el objetivo es mantenerlos. ¡Estás ${listo} para seguir!`;
 }
 const cap = t => t ? t[0].toUpperCase()+t.slice(1) : t;
+// Mensajes para la 2.ª observación en adelante: sin repetir el nombre, enlazados con la anterior
+function seguirDialogo(nM, nP, hayPrev, logro, foco, lista, elegir){
+  if(nM.length && nP.length) return elegir([
+    `Además, en esta parte ${logro}. Lo que queda por delante es ${foco}.`,
+    `Por otro lado, hay más avances: ${logro}. Acá el próximo paso es ${foco}.`,
+    `En este aspecto, ${logro}; ahora conviene ${foco}.`]);
+  if(nM.length) return elegir([
+    `Además, ${logro}, y todo está en valores adecuados.`,
+    `También acá hay buenas noticias: ${logro}. ¡A mantenerlo!`]);
+  if(nP.length && hayPrev) return elegir([
+    `Por otro lado, en esta parte vamos a poner el foco en ${lista(nP)}.`,
+    `En este aspecto, el próximo paso es trabajar ${lista(nP)} con constancia.`]);
+  if(nP.length) return `Además, acá ya sabemos dónde enfocarnos: ${lista(nP)}.`;
+  return `Además, en esta parte todo está en rango. ¡Muy bien!`;
+}
+// Agrupa las observaciones de una misma pantalla, informe o mensaje para no repetir el nombre
+let OBS_CTX=null;
+const conObs = fn => function(...a){ if(OBS_CTX) return fn.apply(this,a); OBS_CTX={n:0}; try{ return fn.apply(this,a); }finally{ OBS_CTX=null; } };
 
 /* ---- Enviar una evaluación o un análisis por WhatsApp ---- */
 const desEsc = t => String(t).replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,"&");
@@ -590,6 +611,8 @@ function waTextoLab(p,l){
   });
   return t;
 }
+htmlResultados=conObs(htmlResultados); htmlLabRes=conObs(htmlLabRes); htmlInforme=conObs(htmlInforme); htmlPaciente=conObs(htmlPaciente);
+waTextoEval=conObs(waTextoEval); waTextoLab=conObs(waTextoLab);
 // Abre WhatsApp con el número del paciente y el texto armado; suma el link al portal si está configurado
 async function enviarWa(p, texto){
   let tel=soloNum(p.telefono), pf=db.profesional||{};
